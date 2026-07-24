@@ -113,32 +113,105 @@ function cdf(d::AlphaStable, x::Real)
     return clamp(stable_cdf(s, Float64(α), Float64(β)), 0.0, 1.0)
 end
 
+# Complementary cdf with full relative accuracy in the upper tail: the
+# generic 1 - cdf(x) would round tiny tail probabilities away against 1.
+function ccdf(d::AlphaStable, x::Real)
+    μ, α, β, σ = Float64.(params(d))
+    s = Float64((Float64(x) - μ) / σ)
+    α == 2.0 && return erfc(s / 2) / 2
+    if α == 1.0 && β == 0.0
+        return s > 0 ? atan(1 / s) / pi : 0.5 - atan(s) / pi
+    end
+    if β == 0.0
+        0.5 <= α <= 2.0 ||
+            throw(DomainError(α, "symmetric stable cdf requires α ∈ [0.5, 2]"))
+        n_inf = 42
+    else
+        α >= 1.1 ||
+            throw(DomainError(α, "asymmetric (β ≠ 0) stable cdf requires α ∈ [1.1, 2]"))
+        n_inf = 80
+    end
+    if s > tail_series_threshold(α, stable_zeta(α, β), n_inf)
+        return stable_ccdf_series_infinity(s, α, β, n_inf)
+    else
+        # away from the upper tail the complement is O(1) and cancellation-free
+        return 1.0 - cdf(d, x)
+    end
+end
+
 function quantile(d::AlphaStable, p::Real)
     0 <= p <= 1 || throw(DomainError(p, "quantile is defined for p ∈ [0, 1]"))
     p == 0 && return -Inf
     p == 1 && return Inf
-    pf = Float64(p)
-    lo, hi = quantile_bracket(d, pf)
-    return find_zero(x -> cdf(d, x) - pf, (lo, hi))
+    μ, α, β, σ = Float64.(params(d))
+    return μ + σ * stable_quantile(α, β, Float64(p))
 end
 
-# expand [μ - kσ, μ + kσ] until it brackets the target probability
-function quantile_bracket(d::AlphaStable, p::Float64)
-    μ = Float64(d.μ)
-    σ = Float64(d.σ)
-    k = 1.0
-    lo = μ - k * σ
-    while cdf(d, lo) > p && k < 2.0^48
-        k *= 2
-        lo = μ - k * σ
+# leading coefficient of the upper-tail expansion 1 - F(x) ≈ c₁·(x - ζ)^(-α)
+# (the k = 0 term of stable_cdf_series_infinity)
+function tail_cdf_coefficient(α::Float64, β::Float64)
+    ζ = stable_zeta(α, β)
+    return gamma(α) * sqrt(1 + ζ^2) * sin(pi / 2 * α - atan(ζ)) / pi
+end
+
+# Standard-law quantile via bisection-safeguarded Newton: the pdf is the exact
+# derivative of the cdf, and inverting the leading tail-series term gives a
+# starting point that is already accurate for extreme p (so extreme quantiles
+# converge in a couple of steps with no clamping).
+function stable_quantile(α::Float64, β::Float64, p::Float64)
+    # complement-free closed forms: 2p - 1 and p - 0.5 would round away
+    # extreme tails (p ≲ 1e-16)
+    α == 2.0 && return p <= 0.5 ? -2 * erfcinv(2 * p) : 2 * erfcinv(2 * (1 - p))
+    α == 1.0 && β == 0.0 && return -cospi(p) / sinpi(p)
+
+    ζ = stable_zeta(α, β)
+    # tail seed in log space so c/p never overflows for subnormal p
+    x0 = if p >= 0.75
+        ζ + exp((log(tail_cdf_coefficient(α, β)) - log1p(-p)) / α)
+    elseif p <= 0.25
+        ζ - exp((log(tail_cdf_coefficient(α, -β)) - log(p)) / α)
+    else
+        ζ
     end
-    k = 1.0
-    hi = μ + k * σ
-    while cdf(d, hi) < p && k < 2.0^48
-        k *= 2
-        hi = μ + k * σ
+    # leading tail term beyond floatmax: ±Inf is the correctly rounded quantile
+    isfinite(x0) || return x0
+
+    # expand a bracket around the tail-series guess
+    h = 1.0 + 0.5 * abs(x0 - ζ)
+    lo = x0 - h
+    hi = x0 + h
+    while stable_cdf(lo, α, β) > p && isfinite(lo)
+        h *= 4
+        lo = x0 - h
     end
-    return lo, hi
+    h = 1.0 + 0.5 * abs(x0 - ζ)
+    while stable_cdf(hi, α, β) < p && isfinite(hi)
+        h *= 4
+        hi = x0 + h
+    end
+
+    x = clamp(x0, lo, hi)
+    for _ in 1:100
+        F = stable_cdf(x, α, β) - p
+        F == 0.0 && break
+        if F > 0
+            hi = x
+        else
+            lo = x
+        end
+        f = stable_pdf(x, α, β)
+        step = F / f
+        xn = x - step
+        if !isfinite(xn) || xn <= lo || xn >= hi
+            xn = 0.5 * (lo + hi)   # bisection safeguard
+        end
+        if abs(xn - x) <= 1e-12 * (1.0 + abs(xn)) || hi - lo <= eps(max(abs(lo), abs(hi)))
+            x = xn
+            break
+        end
+        x = xn
+    end
+    return x
 end
 
 """
@@ -161,7 +234,7 @@ function quantile(d::AlphaStable, p::AbstractVector{<:Real})
 
     steps = max(11, floor(Int, 0.8 * log2(length(p))))
     xs = range(x_min, x_max; length = 2^steps + 1)
-    us = [cdf(d, x) for x in xs]
+    us = cdf_batch(d, collect(xs))
     us_inc, xs_inc = strictly_increasing_knots(us, collect(xs))
 
     itp = Interpolations.extrapolate(
@@ -211,15 +284,88 @@ function rand(rng::AbstractRNG, d::AlphaStable)
     end
 end
 
+#### Fast batch evaluation via the SIMD quadrature kernel
+
+"""
+    pdf_batch(d::AlphaStable, x::AbstractVector{<:Real})
+
+Pdf of `d` at every point of `x` via the hoisted, SIMD-batched quadrature
+kernel, with the tail series outside the quadrature window. Same accuracy as
+scalar `pdf` (~1e-13) at roughly 100-400 ns/point — prefer this over
+broadcasting `pdf.(d, x)` for batches, and over [`pdf_fft`](@ref) whenever
+accuracy matters. Throws `DomainError` for the same (α, β) combinations as
+scalar `pdf`.
+"""
+function pdf_batch(d::AlphaStable, x::AbstractVector{<:Real})
+    μ, α, β, σ = Float64.(params(d))
+    s = Float64[(Float64(xi) - μ) / σ for xi in x]
+    if α == 2.0
+        return [exp(-si^2 / 4) / (2 * sqrt(pi)) / σ for si in s]
+    elseif α == 1.0 && β == 0.0
+        return [1 / (pi * (1 + si^2)) / σ for si in s]
+    end
+    k = StableQuadKernel(α, β)
+    p = kernel_batch(k, s; density = true)
+    p ./= σ
+    return p
+end
+
+"""
+    logpdf_batch(d::AlphaStable, x::AbstractVector{<:Real})
+
+`log.(pdf_batch(d, x))` with nonpositive values mapped to `-Inf`. This is the
+likelihood workhorse used by [`fitmlestable`](@ref).
+"""
+function logpdf_batch(d::AlphaStable, x::AbstractVector{<:Real})
+    p = pdf_batch(d, x)
+    return [pi_ > 0 ? log(pi_) : -Inf for pi_ in p]
+end
+
+"""
+    cdf_batch(d::AlphaStable, x::AbstractVector{<:Real})
+
+Cdf of `d` at every point of `x` via the SIMD-batched quadrature kernel plus
+tail series. Same accuracy and support restrictions as scalar `cdf`.
+"""
+function cdf_batch(d::AlphaStable, x::AbstractVector{<:Real})
+    μ, α, β, σ = Float64.(params(d))
+    s = Float64[(Float64(xi) - μ) / σ for xi in x]
+    if α == 2.0
+        return [(1 + erf(si / 2)) / 2 for si in s]
+    elseif α == 1.0 && β == 0.0
+        return [atan(si) / pi + 0.5 for si in s]
+    end
+    # same support restrictions and error messages as scalar cdf (the kernel
+    # constructor would otherwise throw the pdf-worded error)
+    if β == 0.0
+        0.5 <= α <= 2.0 ||
+            throw(DomainError(α, "symmetric stable cdf requires α ∈ [0.5, 2]"))
+    else
+        α >= 1.1 ||
+            throw(DomainError(α, "asymmetric (β ≠ 0) stable cdf requires α ∈ [1.1, 2]"))
+    end
+    k = StableQuadKernel(α, β)
+    c = kernel_batch(k, s; density = false)
+    clamp!(c, 0.0, 1.0)
+    return c
+end
+
 #### Fast batch evaluation via FFT of the characteristic function
 
 """
     pdf_fft(d::AlphaStable, x::AbstractVector{<:Real})
 
-Pdf of `d` at all points of `x` at once, via FFT inversion of the
-characteristic function on a grid spanning `extrema(x)` plus padding, with
-cubic-spline interpolation. Much faster than `pdf.(d, x)` for large `x`;
-accuracy is limited by the grid resolution.
+Pdf of `d` at all points of `x` via FFT inversion of the characteristic
+function spliced with the tail series. Unlike [`pdf_batch`](@ref) this also
+covers the quadrature-unsupported band `α ∈ (0.9, 1.1)` with `β ≠ 0` — use it
+as the fallback there; prefer `pdf_batch` (quadrature accuracy) whenever it is
+supported.
+
+Accuracy: ~1e-6 absolute in the body and exact relative tails for `α ≥ 0.5`;
+degrades below `α = 0.5` (percent level by `α ≈ 0.4`) because the cf decay
+`exp(-t^α)` outgrows any feasible uniform grid. At exactly `α = 1` with
+`β ≠ 0` the far tails (standardized `|s| > 2000`) use the leading asymptote,
+accurate to ~1e-3 relative.
 """
 pdf_fft(d::AlphaStable, x::AbstractVector{<:Real}) =
     stable_pdf_fft(x, params(d)...)
@@ -228,6 +374,6 @@ pdf_fft(d::AlphaStable, x::AbstractVector{<:Real}) =
     logpdf_fft(d::AlphaStable, x::AbstractVector{<:Real})
 
 `log.(pdf_fft(d, x))`, with nonpositive interpolated densities floored to
-`√eps` so the result stays finite — intended for likelihood maximization.
+`√eps` so the result stays finite.
 """
 logpdf_fft(d::AlphaStable, x::AbstractVector{<:Real}) = log.(pdf_fft(d, x))

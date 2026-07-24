@@ -9,12 +9,12 @@ function stable_sym_cdf(x::Float64, a::Float64)
     elseif 0.5 <= a < 2.0
         # same tail bound as for the pdf series; the cdf series bound is strictly smaller
         n_inf = 42
-        min_inf_x = (a / (pi * eps(Float64)) *
-                     gamma(a * n_inf) / gamma(n_inf))^(1 / (a * n_inf - 1))
         xa = abs(x)
-        if xa > min_inf_x
-            upper_tail_cdf = stable_cdf_series_infinity(xa, a, 0.0, n_inf)
-            return x > 0 ? upper_tail_cdf : 1.0 - upper_tail_cdf
+        if xa > tail_series_threshold(a, 0.0, n_inf)
+            # the series sum is the tail probability itself; return it directly
+            # in the lower tail so the tiny value keeps full relative accuracy
+            return x > 0 ? 1.0 - stable_ccdf_series_infinity(xa, a, 0.0, n_inf) :
+                   stable_ccdf_series_infinity(xa, a, 0.0, n_inf)
         else
             return stable_sym_cdf_integral(x, a)
         end

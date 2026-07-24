@@ -154,10 +154,11 @@ function fitcullstable(x::AbstractVector{<:Real})
     return [mu, alpha, beta, sigma]
 end
 
-# Negative log-likelihood used for MLE, based on the FFT pdf so that a full
-# data sweep costs one FFT. Parameters are clamped to the numerically
-# supported region, and |β| is damped near α = 2 where it is barely
-# identifiable.
+# Negative log-likelihood used for MLE, based on the SIMD-batched quadrature
+# kernel (exact to quadrature accuracy — the clamped α ∈ [1.1, 2] region is
+# fully covered by the 86-node rule). Parameters are clamped to the
+# numerically supported region, and |β| is damped near α = 2 where it is
+# barely identifiable.
 function negloglike(p::AbstractVector{<:Real}, data::AbstractVector{Float64})
     μ = Float64(p[1])
     α = clamp(Float64(p[2]), 1.1, 2.0)
@@ -165,7 +166,11 @@ function negloglike(p::AbstractVector{<:Real}, data::AbstractVector{Float64})
     σ = max(Float64(p[4]), 1e-9)
     beta_penalty = (α > 1.818 && abs(β) > 0.5) ? length(data) * (abs(β) - 0.5)^2 : 0.0
     d = AlphaStable(μ, α, β, σ; check_args = false)
-    return -sum(logpdf_fft(d, data)) + beta_penalty
+    # floor each contribution (matching the old FFT objective's √eps pdf floor)
+    # so the objective and its FD gradient stay finite at |β| → 1 trial points,
+    # where light-tail quadrature noise can make logpdf_batch return -Inf
+    log_floor = log(sqrt(eps(Float64)))
+    return -sum(Base.Fix2(max, log_floor), logpdf_batch(d, data)) + beta_penalty
 end
 
 """

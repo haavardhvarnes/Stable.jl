@@ -14,14 +14,14 @@ using FFTW
 using Interpolations
 using Ipopt
 using JuMP
+using LoopVectorization
 using QuadGK
 using Random
-using Roots
 using SpecialFunctions
 using Statistics
 using StatsBase
 
-import Distributions: @distr_support, pdf, logpdf, cdf, quantile, cf,
+import Distributions: @distr_support, pdf, logpdf, cdf, ccdf, quantile, cf,
     location, scale, params, partype, fit_mle
 import Statistics: mean, var, median
 import StatsBase: mode
@@ -29,12 +29,12 @@ import Random: rand
 
 export AlphaStable
 # re-export the extended Distributions/Statistics API
-export pdf, logpdf, cdf, quantile, cf, mean, var, median, mode,
+export pdf, logpdf, cdf, ccdf, quantile, cf, mean, var, median, mode,
     location, scale, params, partype, fit_mle
 # fitting helpers
 export fitcullstable, fitmlestable, fitstable, refitstable
 # fast batch evaluation
-export pdf_fft, logpdf_fft
+export pdf_batch, logpdf_batch, cdf_batch, pdf_fft, logpdf_fft
 
 # standard-law numerics (μ = 0, σ = 1)
 include("stable_sym_pdf_fourier_integral.jl")
@@ -48,6 +48,7 @@ include("stable_pdf.jl")
 include("stable_cdf_integral.jl")
 include("stable_cdf_series_infinity.jl")
 include("stable_cdf.jl")
+include("quadrature_kernel.jl")
 
 # reference integrands (documentation / verification)
 include("stable_pdf_integrand.jl")

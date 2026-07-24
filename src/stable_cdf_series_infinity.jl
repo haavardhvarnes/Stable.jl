@@ -1,11 +1,13 @@
 # Asymptotic tail series for the standard stable cdf in the (M) parameterization:
 #
-#   F(x) ≈ 1 - (1/π) Σₖ (-1)ᵏ [Γ(α(k+1))/(k+1)!] (1+ζ²)^((k+1)/2)
-#                     sin((k+1)(πα/2 - atan ζ)) (x-ζ)^(-α(k+1))
+#   1 - F(x) ≈ (1/π) Σₖ (-1)ᵏ [Γ(α(k+1))/(k+1)!] (1+ζ²)^((k+1)/2)
+#                    sin((k+1)(πα/2 - atan ζ)) (x-ζ)^(-α(k+1))
 #
-# valid for x above the `min_inf_x` bound computed by the dispatchers.
-function stable_cdf_series_infinity(x::Float64, a::Float64, b::Float64,
-                                    max_coef::Integer)
+# valid for x above the tail_series_threshold bound. stable_ccdf_series_infinity
+# returns the upper-tail probability itself, at full relative accuracy — use it
+# directly for tail probabilities instead of 1 - cdf, which cancels.
+function stable_ccdf_series_infinity(x::Float64, a::Float64, b::Float64,
+                                     max_coef::Integer)
     zeta = -b * tan(pi * a / 2)
     angle = pi / 2 * a - atan(zeta)
     sqrt_1_plus_zeta2 = sqrt(1 + zeta^2)
@@ -23,5 +25,8 @@ function stable_cdf_series_infinity(x::Float64, a::Float64, b::Float64,
         val += term_sign * gamma_part * geometric_part * sin(angle * (k + 1)) * x_part
         term_sign = -term_sign
     end
-    return 1 - val / pi
+    return val / pi
 end
+
+stable_cdf_series_infinity(x::Float64, a::Float64, b::Float64, max_coef::Integer) =
+    1 - stable_ccdf_series_infinity(x, a, b, max_coef)

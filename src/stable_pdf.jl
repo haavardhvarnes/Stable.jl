@@ -20,10 +20,7 @@ function stable_pdf(x::Float64, a::Float64, b::Float64)
             "asymmetric (β ≠ 0) stable pdf requires α ∈ [0.5, 0.9] ∪ [1.1, 2]"))
     end
 
-    # smallest x for which the truncated series at infinity reaches machine precision
-    min_inf_x = ((1 + z^2)^(n_inf / 2) * a / (pi * eps(Float64)) *
-                 gamma(a * n_inf) / gamma(n_inf))^(1 / (a * n_inf - 1)) + z
-
-    return x > min_inf_x ? stable_pdf_series_infinity(x, a, b, n_inf) :
+    return x > tail_series_threshold(a, z, n_inf) ?
+           stable_pdf_series_infinity(x, a, b, n_inf) :
            stable_pdf_fourier_integral(x, a, b)
 end

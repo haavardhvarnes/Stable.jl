@@ -71,10 +71,20 @@ Outside these ranges a `DomainError` is thrown. All numerics run in `Float64`.
 
 ## Batch evaluation
 
-`pdf.(d, xs)` broadcasts the pointwise quadrature. For large batches,
-`pdf_fft(d, xs)` / `logpdf_fft(d, xs)` invert the characteristic function with
-a single FFT (accuracy ≈ 1e-4); `quantile(d, ps)` switches to an interpolated
-inverse-cdf grid for 64+ probabilities.
+- `pdf_batch(d, xs)` / `logpdf_batch(d, xs)` / `cdf_batch(d, xs)` — hoisted,
+  SIMD-batched quadrature kernel spliced with the tail series: identical
+  accuracy to the scalar functions (~1e-13) at roughly 140 ns/point
+  single-threaded (≈3x faster with Julia threads). This is the likelihood
+  engine behind `fit_mle`.
+- `pdf_fft(d, xs)` / `logpdf_fft(d, xs)` — FFT inversion of the
+  characteristic function with series tails (~1e-6 absolute in the body and
+  exact relative tails for `α ≥ 0.5`; degrades below that). Covers
+  `α ∈ (0.9, 1.1)` with `β ≠ 0` where the quadrature tables have no rule.
+- `quantile(d, ps)` switches to an interpolated inverse-cdf grid for 64+
+  probabilities; scalar quantiles use a tail-series-seeded Newton solver with
+  the pdf as exact derivative (~30 µs, exact for extreme `p` — no clamping).
+- `ccdf(d, x)` evaluates upper-tail probabilities at full relative accuracy
+  (no `1 - cdf` cancellation), and the deep lower `cdf` tail likewise.
 
 ## Testing
 

@@ -3,6 +3,7 @@ using Stable
 using Distributions
 using QuadGK
 using Random
+using SpecialFunctions
 using Statistics
 
 @testset "Stable.jl" begin
@@ -98,6 +99,19 @@ using Statistics
         d = AlphaStable(0.5, 1.5, 0.3, 2.0)
         @test cdf(d, -1e9) < 1e-6
         @test cdf(d, 1e9) > 1 - 1e-6
+        # tail probabilities carry full relative accuracy: the deep lower cdf
+        # and the upper ccdf are the series sums themselves, and tail decay
+        # follows the α power law
+        @test cdf(d, -1e6) > 0
+        @test cdf(d, -1e7) / cdf(d, -1e6) ≈ 10.0^(-1.5) rtol = 1e-3
+        @test ccdf(d, 1e7) / ccdf(d, 1e6) ≈ 10.0^(-1.5) rtol = 1e-3
+        dsym = AlphaStable(0.0, 1.3, 0.0, 1.0)
+        for x in (50.0, 1e4, 1e8)
+            @test ccdf(dsym, x) ≈ cdf(dsym, -x) rtol = 1e-12   # exact symmetry
+        end
+        @test ccdf(AlphaStable(0.0, 1.0, 0.0, 1.0), 1e8) ≈ 1 / (pi * 1e8) rtol = 1e-6
+        @test ccdf(AlphaStable(0.0, 2.0, 0.0, 1.0), 10.0) ≈ erfc(5.0) / 2 rtol = 1e-13
+        @test ccdf(d, 0.5) + cdf(d, 0.5) ≈ 1.0 atol = 1e-14
     end
 
     @testset "quantile" begin
@@ -111,6 +125,29 @@ using Statistics
         @test quantile(d, 0.0) == -Inf
         @test quantile(d, 1.0) == Inf
         @test_throws DomainError quantile(d, 1.5)
+        # extreme probabilities: the tail-series-seeded Newton solver is exact
+        # (no clamping on the scalar path)
+        for p in (1e-12, 1e-9, 1e-4, 1 - 1e-9, 1 - 1e-12)
+            q = quantile(d, p)
+            @test isfinite(q)
+            @test cdf(d, q) ≈ p rtol = 1e-8
+        end
+        # subnormal p gets a log-space seed (regression: NaN via Inf - Inf)
+        @test isfinite(quantile(d, 5e-324))
+        @test cdf(d, quantile(d, 1e-300)) ≈ 1e-300 rtol = 1e-6
+        # a quantile beyond floatmax is ±Inf, not NaN
+        @test quantile(AlphaStable(0.0, 0.7, 0.0, 1.0), 1e-300) == -Inf
+        # closed-form branches are complement-free (regression: -Inf / tan
+        # saturation for p ≲ 1e-16)
+        dg = AlphaStable(0.0, 2.0, 0.0, 1.0)
+        for p in (1e-17, 1e-100, 1e-300)
+            @test isfinite(quantile(dg, p))
+            @test quantile(dg, p) ≈ quantile(Normal(0.0, sqrt(2)), p) rtol = 1e-12
+        end
+        dc = AlphaStable(0.0, 1.0, 0.0, 1.0)
+        for p in (1e-17, 1e-100, 1e-300)
+            @test quantile(dc, p) ≈ -1 / (pi * p) rtol = 1e-10
+        end
         # batch fast path (≥ 64 points goes through the interpolated grid)
         ps = collect(range(0.001, 0.999; length = 1500))
         xq = quantile(d, ps)
@@ -180,12 +217,86 @@ using Statistics
         @test length(rand(d, 7)) == 7
     end
 
+    @testset "batch evaluation (SIMD quadrature kernel)" begin
+        for (a, b) in [(1.5, 0.5), (1.2, 0.9), (0.7, 0.3), (1.9, -0.6), (1.5, 0.0),
+                       (0.7, 0.0), (1.05, 0.0), (2.0, 0.0), (1.0, 0.0)]
+            d = AlphaStable(0.3, a, b, 1.7)
+            xs = collect(range(-40, 40; length = 501))
+            @test maximum(abs.(pdf_batch(d, xs) .- pdf.(d, xs))) < 1e-13
+            if b == 0.0 || a >= 1.1
+                @test maximum(abs.(cdf_batch(d, xs) .- cdf.(d, xs))) < 1e-13
+            else
+                @test_throws DomainError cdf_batch(d, xs)
+            end
+            lp = logpdf_batch(d, xs)
+            @test all(isfinite, lp)
+            @test maximum(abs.(lp .- logpdf.(d, xs))) < 1e-10
+        end
+        @test_throws DomainError pdf_batch(AlphaStable(0.0, 1.0, 0.5, 1.0), [0.3])
+        # cdf_batch reports cdf-specific support, matching scalar cdf's message
+        @test_throws DomainError cdf_batch(AlphaStable(0.0, 0.7, 0.3, 1.0), [0.3])
+        # input genericity
+        d = AlphaStable(0.0, 1.5, 0.3, 1.0)
+        @test pdf_batch(d, Float64[]) == Float64[]
+        @test cdf_batch(d, Int[]) == Float64[]
+        @test pdf_batch(d, [-2, 0, 3]) ≈ pdf.(d, [-2.0, 0.0, 3.0])
+        @test cdf_batch(d, Float32[-1.5, 0.5]) ≈ cdf.(d, [-1.5, 0.5]) atol = 1e-7
+        @test pdf_fft(d, Float64[]) == Float64[]
+    end
+
     @testset "pdf_fft and logpdf_fft" begin
         for (a, b) in [(1.5, 0.5), (1.8, -0.3), (1.2, 0.0)]
             d = AlphaStable(0.3, a, b, 1.7)
             xs = collect(range(-9, 9; length = 1201))
-            @test maximum(abs.(pdf_fft(d, xs) .- pdf.(d, xs))) < 5e-4
+            @test maximum(abs.(pdf_fft(d, xs) .- pdf.(d, xs))) < 5e-6
             @test all(isfinite, logpdf_fft(d, xs))
+        end
+        # far tails route through the certified series (exact relative accuracy)
+        d = AlphaStable(0.0, 1.5, 0.5, 1.0)
+        xt = [-500.0, -60.0, 60.0, 500.0]
+        @test maximum(abs.(pdf_fft(d, xt) ./ pdf.(d, xt) .- 1)) < 1e-10
+        # α ∈ (0.9, 1.1) with β ≠ 0: the quadrature is unsupported but the
+        # FFT + series path covers it — check against a stably-rewritten
+        # adaptive Fourier inversion (phase s·t + ζ·t·expm1((α-1)·log t))
+        a, b = 0.95, 0.5
+        z = -b * tan(a * pi / 2)
+        function band_oracle(s)
+            f(t) = t == 0 ? 1.0 :
+                   cos(s * t + z * t * expm1((a - 1) * log(t))) * exp(-t^a)
+            int, _ = quadgk(f, 0.0, 300.0; rtol = 1e-12, atol = 1e-15)
+            return int / pi
+        end
+        db = AlphaStable(0.0, a, b, 1.0)
+        ss = collect(range(-15, 15; length = 41))
+        pf = pdf_fft(db, ss)
+        @test maximum(abs(pf[i] - band_oracle(ss[i])) for i in eachindex(ss)) < 1e-5
+        # far tails in the α ≈ 1 band route through the series (regression:
+        # tail_series_threshold overflowed to Inf, leaving aliased FFT values)
+        function band_tail_oracle(s, aa, bb)
+            zz = -bb * tan(aa * pi / 2)
+            # α = 1 needs its own phase — the expm1 form collapses to the
+            # symmetric integrand there
+            phase(t) = aa == 1 ? s * t + bb * (2 / pi) * t * log(t) :
+                       s * t + zz * t * expm1((aa - 1) * log(t))
+            g(t) = t == 0 ? 1.0 : cos(phase(t)) * exp(-t^aa)
+            int, _ = quadgk(g, 0.0, 300.0; rtol = 1e-12, atol = 1e-300)
+            return int / pi
+        end
+        for aa in (0.999, 1.001)
+            dt = AlphaStable(0.0, aa, 0.5, 1.0)
+            @test pdf_fft(dt, [5000.0])[1] ≈ band_tail_oracle(5000.0, aa, 0.5) rtol = 1e-6
+        end
+        # exactly α = 1 with β ≠ 0: dedicated tail handling (asymptote beyond
+        # |s| = 2000, ~1e-3 relative)
+        d1 = AlphaStable(0.0, 1.0, 0.5, 1.0)
+        @test pdf_fft(d1, [5000.0])[1] ≈ 1.5 / (pi * 5000.0^2) rtol = 1e-2
+        @test pdf_fft(d1, [100.0])[1] ≈ band_tail_oracle(100.0, 1.0, 0.5) rtol = 1e-6
+        # small α: documented ~1e-6 body accuracy holds down to α = 0.5
+        for (aa, bb) in [(0.5, 0.0), (0.7, 0.5)]
+            ds = AlphaStable(0.0, aa, bb, 1.0)
+            xs_s = collect(range(-6, 6; length = 121))
+            @test maximum(abs.(pdf_fft(ds, xs_s) .-
+                               [Stable.stable_pdf(x, aa, bb) for x in xs_s])) < 5e-6
         end
     end
 

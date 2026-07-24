@@ -34,38 +34,103 @@ end
 stablechar(t::Real, mu::Real, alfa::Real, beta::Real, sigma::Real) =
     stablechar(Float64(t), Float64(mu), Float64(alfa), Float64(beta), Float64(sigma))
 
+# Grid design: work on the standardized law, restrict the FFT/spline to the
+# body window between the two tail-series thresholds (points beyond them get
+# the certified series instead of spline extrapolation), size the frequency
+# range from the known cf decay |cf(t)| = exp(-t^α), and pad the spatial span
+# so that the FFT's periodized tail images alias below ~1e-6. This keeps the
+# grid size data-independent (the body window is threshold-capped) and lifts
+# the accuracy of the old data-spanning grid (~1e-4) to ~1e-6 with exact
+# relative accuracy in the tails.
 function stable_pdf_fft(x::AbstractVector{<:Real}, mu::Real, alfa::Real,
                         beta::Real, sigma::Real; check::Bool = true)
     μ, α, β, σ = Float64(mu), Float64(alfa), Float64(beta), Float64(sigma)
-    n = 8192
+    (0.0 < α <= 2.0 && σ > 0.0) ||
+        throw(DomainError((α, σ), "stable_pdf_fft requires 0 < α ≤ 2 and σ > 0"))
+    isempty(x) && return Float64[]
 
-    # Pad the grid well past the data range: the FFT yields the *periodized*
-    # pdf, so with heavy tails the images at ± span alias into the evaluation
-    # window. Padding by the data range pushes that error below ~1e-4.
-    lo, hi = extrema(x)
-    pad = 2 * σ + (Float64(hi) - Float64(lo))
-    lo = Float64(lo) - pad
-    hi = Float64(hi) + pad
-    span = (hi - lo) * n / (n - 1)   # k = 0:n-1 then covers [lo, hi] inclusive
-    dx = span / n
-    dt = 2 * pi / span
-    T = n / 2 * dt
+    n_inf = pdf_series_terms(α, β)
+    ζ = stable_zeta(α, β)
+    # at exactly α = 1 with β ≠ 0, ζ = -β·tan(π/2) ≈ ∓8e15 is a floating-point
+    # artifact and the (M)-form tail series in (x - ζ) is meaningless; use a
+    # fixed window and a dedicated tail evaluation instead
+    alpha_one_skewed = α == 1.0 && β != 0.0
+    if alpha_one_skewed
+        upper = 50.0
+        lower = -50.0
+    else
+        upper = tail_series_threshold(α, ζ, n_inf)
+        lower = -tail_series_threshold(α, -ζ, n_inf)
+    end
 
-    j = 0:(n - 1)
-    t = -T .+ j .* dt
-    phi = cis.(-dt * lo .* j) .* stablechar.(t, μ, α, β, σ)
-    xk = lo .+ j .* dx
-    pdfk = real.(dt / (2 * pi) .* cis.(T .* xk) .* fft(phi))
+    out = Vector{Float64}(undef, length(x))
+    body_idx = Int[]
+    body_s = Float64[]
+    for (i, xi) in pairs(x)
+        s = (Float64(xi) - μ) / σ
+        if s > upper
+            out[i] = (alpha_one_skewed ? alpha_one_skewed_tail_pdf(s, β) :
+                      stable_pdf_series_infinity(s, α, β, n_inf)) / σ
+        elseif s < lower
+            out[i] = (alpha_one_skewed ? alpha_one_skewed_tail_pdf(s, β) :
+                      stable_pdf_series_infinity(-s, α, -β, n_inf)) / σ
+        else
+            push!(body_idx, i)
+            push!(body_s, s)
+        end
+    end
 
-    itp = Interpolations.scale(interpolate(pdfk, BSpline(Cubic(Line(OnGrid())))),
-                               range(lo; step = dx, length = n))
-    p = [itp(Float64(xi)) for xi in x]
+    if !isempty(body_idx)
+        w_lo = minimum(body_s) - 0.5
+        w_hi = maximum(body_s) + 0.5
+
+        # frequency range needed for the cf to decay below ~1e-16, and a grid
+        # step fine enough for ~1e-6 cubic-spline accuracy
+        t_need = (-log(1e-16))^(1 / α)
+        dx_target = min(0.1, pi / t_need)
+        # spatial padding so the periodized tail images stay below ~1e-6
+        c_tail = α * max(tail_cdf_coefficient(α, β), tail_cdf_coefficient(α, -β))
+        pad = clamp((max(c_tail, 1e-4) / 1e-6)^(1 / (1 + α)), 8.0, 4000.0)
+
+        # the 2^20 cap is only reached for α ≲ 0.7; below α ≈ 0.5 even that
+        # grid cannot resolve the cf decay and accuracy degrades (documented)
+        span = (w_hi - w_lo) + 2 * pad
+        n = clamp(nextpow(2, ceil(Int, span / dx_target)), 1024, 1 << 20)
+        dx = span / n
+        dt = 2 * pi / span
+        T = n / 2 * dt
+        g_lo = w_lo - pad
+
+        j = 0:(n - 1)
+        t = -T .+ j .* dt
+        phi = cis.(-dt * g_lo .* j) .* stablechar.(t, 0.0, α, β, 1.0)
+        sk = g_lo .+ j .* dx
+        pdfk = real.(dt / (2 * pi) .* cis.(T .* sk) .* fft(phi))
+
+        itp = Interpolations.scale(interpolate(pdfk, BSpline(Cubic(Line(OnGrid())))),
+                                   range(g_lo; step = dx, length = n))
+        for (b, s) in enumerate(body_s)
+            out[body_idx[b]] = itp(s) / σ
+        end
+    end
 
     if check
         # guard against spline undershoot in regions of vanishing density
-        @. p = ifelse(p <= 0, sqrt(eps(Float64)), p)
+        @. out = ifelse(out <= 0, sqrt(eps(Float64)), out)
     end
-    return p
+    return out
+end
+
+# Pdf for α = 1 with β ≠ 0 outside the FFT window: adaptive inversion of the
+# α = 1 characteristic function for moderate |s|, and the leading tail
+# asymptote (1 ± β)/(π s²) beyond |s| = 2000 (relative accuracy ~1e-3 there).
+function alpha_one_skewed_tail_pdf(s::Float64, β::Float64)
+    sa = abs(s)
+    βs = s >= 0 ? β : -β    # reflection: f(-s; 1, β) = f(s; 1, -β)
+    sa > 2000.0 && return (1 + βs) / (pi * sa^2)
+    f(t) = t == 0.0 ? 1.0 : cos(sa * t + βs * (2 / pi) * t * log(t)) * exp(-t)
+    int, _ = quadgk(f, 0.0, 40.0; rtol = 1e-10, atol = 1e-300)
+    return int / pi
 end
 
 # Adaptive-quadrature pdf based on Nolan's integral representation

@@ -50,27 +50,41 @@ Three layers; the standard-law numerics (μ = 0, σ = 1) are separate from the
 Distributions.jl interface:
 
 1. **Standard-law numerics** — `stable_pdf.jl` / `stable_cdf.jl` are dispatchers picking per
-   region: symmetric closed forms (α = 2, α = 1) → reflection identity (`x < ζ` maps to
-   `(-x, -β)`) → tail series above a computed `min_inf_x` threshold
-   (`*_series_infinity.jl`, computed via `loggamma` ratios to stay in Float64) → otherwise a
-   fixed-node Fourier-integral quadrature (`*_integral.jl` files, hard-coded qastable
-   nodes/weights stored as `const GX_*`/`GW_*` vectors). `stable_pdf_series_zero.jl` and the
-   three `*_integrand.jl` files are reference implementations, not wired into the dispatchers.
-2. **Distributions.jl interface** — `alphastable.jl`: struct + validation, `pdf` (standardize,
-   evaluate, divide by σ), `cdf`, `logpdf`, scalar `quantile` (bracket expansion + `find_zero`),
-   batch `quantile` on ≥ 64 points via an interpolated inverse-cdf grid, `cf`, and `rand`
-   (Chambers–Mallows–Stuck **plus the `+ζ` shift converting the S1 draw to S0**).
-   `stable_pdf_fft.jl` holds the shared characteristic function `stablechar` (single source of
-   truth for `cf`), the FFT-inversion batch pdf (`pdf_fft`/`logpdf_fft`, grid padded by the data
-   range because the FFT periodizes the heavy-tailed pdf — accuracy ~1e-4), and
-   `stdstable_pdf_quad`, an independent QuadGK/Nolan-integral pdf used as the test oracle.
+   region: symmetric closed forms (α = 2, α = 1) → tail series above the
+   `tail_series_threshold` bound (`*_series_infinity.jl`, `loggamma` ratios to stay in
+   Float64; the **deep lower tail returns the reflected series sum directly** — never
+   `1 - (1 - tiny)`, which would destroy relative accuracy) → otherwise a fixed-node
+   Fourier-integral quadrature (`*_integral.jl`, hard-coded qastable nodes as `const GX_*`/
+   `GW_*`). The quadrature integrand realizes the reflection identity analytically, so it is
+   valid on both sides of ζ. `quadrature_kernel.jl` is the batch engine: per-(α, β)
+   `StableQuadKernel` caches hoisted node vectors (`t`, phase offset `u`, weight `w`) so a
+   point costs one cos/sin + two fma per node, batched with LoopVectorization `@tturbo`
+   (threads when Julia has them; ~140 ns/pt single-threaded vs 1.4-3.4 µs scalar).
+   `stable_pdf_series_zero.jl` and the `*_integrand.jl` files are reference implementations.
+2. **Distributions.jl interface** — `alphastable.jl`: struct + validation, `pdf`/`cdf`/
+   `logpdf`, `ccdf` (upper tail via the series sum, full relative accuracy), scalar `quantile`
+   (bisection-safeguarded **Newton with the pdf as exact derivative, seeded by inverting the
+   leading tail-series term** — ~30 µs, exact for extreme p, no clamping), batch `quantile` on
+   ≥ 64 points via an interpolated inverse-cdf grid over `cdf_batch`, `cf`, `rand`
+   (Chambers–Mallows–Stuck **plus the `+ζ` shift converting the S1 draw to S0**), and the
+   batch API `pdf_batch`/`logpdf_batch`/`cdf_batch` (quadrature accuracy). `stable_pdf_fft.jl`
+   holds `stablechar` (single source of truth for `cf`), the FFT batch pdf
+   (`pdf_fft`/`logpdf_fft`: body window between the tail thresholds, cf-decay-sized grid,
+   ~1e-6 body accuracy, series tails — the only path covering α ∈ (0.9, 1.1) with β ≠ 0), and
+   `stdstable_pdf_quad`, an independent QuadGK/Nolan-integral pdf used as the test oracle
+   (itself fragile near α = 1 — the reliable oracle there is direct cf inversion with the
+   stable phase rewrite `s·t + ζ·t·expm1((α-1)·log t)`, see the pdf_fft testset).
 3. **Fitting** — `fit.jl`: `fitcullstable` (McCulloch quantile estimator; his ζ **is** the S0
    location, so it is returned as μ directly) seeds `fitmlestable` (JuMP 1.x + Ipopt maximizing
-   the FFT-based log-likelihood with central finite-difference gradients,
+   the **exact `logpdf_batch` log-likelihood** with central finite-difference gradients,
    `hessian_approximation = limited-memory`, tolerances deliberately loose to match FD noise —
    tightening them just makes Ipopt run to the iteration cap). Falls back to the McCulloch
    estimate if the solver fails or worsens the likelihood. `fit_mle(AlphaStable, x)` /
    `fitstable` / `refitstable` wrap it.
+
+`docs/acceleration-research.md` records the 2026 harmonic-analysis survey (verified idea
+shortlist with citations) that motivated the kernel/quantile/FFT design; consult it before
+attempting further speedups — it documents which approaches were refuted and why.
 
 ## Deliberate design decisions (do not "fix" these back)
 

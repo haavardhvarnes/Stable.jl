@@ -27,9 +27,10 @@ The numerics are a Julia port of Ament & O'Neil's *qastable* MATLAB code
 - Instantiate deps after checkout: `julia --project=. -e 'using Pkg; Pkg.instantiate()'`
 - Quick REPL session: `julia --project=.` then `using Stable`
 - There is no separate build/lint step. Format with Runic.jl if installed (it currently is not).
-- GitHub: `haavardhvarnes/Stable.jl` (private); CI (`.github/workflows/CI.yml`) runs the test
-  suite on Julia LTS + stable. The committed Manifest pins the maintainer's resolve; CI deletes
-  it before instantiating.
+- GitHub: `haavardhvarnes/Stable.jl` (public, MIT — numerics attribution to qastable in
+  LICENSE; README declares personal-use intent, no support commitment). CI
+  (`.github/workflows/CI.yml`) runs the test suite on Julia LTS + stable. The committed
+  Manifest pins the maintainer's resolve; CI deletes it before instantiating.
 - Registered in the personal registry `haavardhvarnes/JuliaRegistry` (clone at
   `~/.julia/registries/JuliaRegistry`). To release a new version: bump `version` in
   Project.toml, commit and push, then

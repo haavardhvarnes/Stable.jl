@@ -33,6 +33,20 @@ Pkg.Registry.add(RegistrySpec(url = "https://github.com/haavardhvarnes/JuliaRegi
 Pkg.add("Stable")
 ```
 
+## Status, support and reuse
+
+This is a personal package, published in the open because it may be useful to
+others. It is maintained on a when-needed basis: there is **no support
+commitment**, and issues or pull requests may go unanswered.
+
+That said, it is MIT-licensed precisely so the code can outgrow this
+repository. If you find it useful, help yourself — fork it, vendor pieces of
+it, or develop it into a properly maintained community package in the General
+registry. No permission needed; a note back is appreciated but not required.
+The numerical core is a Julia port of
+[qastable](https://gitlab.com/s_ament/qastable) by Ament & O'Neil (MIT), whose
+attribution should travel with the code (see [LICENSE](LICENSE)).
+
 ## Parameterization
 
 `AlphaStable(μ, α, β, σ)` uses **Zolotarev's (M) parameterization (= Nolan's S0)

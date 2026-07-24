@@ -246,7 +246,8 @@ function quantile(d::AlphaStable, p::AbstractVector{<:Real})
     us_inc, xs_inc = strictly_increasing_knots(us, collect(xs))
 
     itp = Interpolations.extrapolate(
-        Interpolations.interpolate((us_inc,), xs_inc, Gridded(Linear())), Flat())
+        Interpolations.interpolate((us_inc,), xs_inc, Gridded(Linear())),
+        Interpolations.Flat())
     return [itp(pp) for pp in pc]
 end
 

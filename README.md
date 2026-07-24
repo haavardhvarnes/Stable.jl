@@ -18,7 +18,7 @@ quantile(d, 0.99)
 cf(d, 0.7)                # characteristic function
 x = rand(d, 10_000)       # Chambers–Mallows–Stuck sampling
 
-fit_mle(AlphaStable, x)   # maximum likelihood (McCulloch start + Ipopt)
+fit_mle(AlphaStable, x)   # maximum likelihood (McCulloch start + Nelder–Mead)
 ```
 
 ## Installation
@@ -76,9 +76,9 @@ Outside these ranges a `DomainError` is thrown. All numerics run in `Float64`.
 ## Fitting
 
 - `fit_mle(AlphaStable, x)` / `fitstable(x)` — maximum likelihood: McCulloch's
-  (1986) quantile estimator seeds an Ipopt run maximizing an FFT-based
-  log-likelihood; falls back to the McCulloch estimate if the solver fails.
-  Restricted to `α ∈ [1.11, 2)`.
+  (1986) quantile estimator seeds a Nelder–Mead (Optim.jl) run maximizing the
+  exact quadrature-based log-likelihood; falls back to the McCulloch estimate
+  if the optimizer fails. Restricted to `α ∈ [1.11, 2)`.
 - `fitcullstable(x)` — the McCulloch quantile estimator alone (fast, consistent).
 - `fitmlestable(x)` — the underlying routine, returning
   `(params, loglike, status)`.

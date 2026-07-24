@@ -12,9 +12,8 @@ module Stable
 using Distributions
 using FFTW
 using Interpolations
-using Ipopt
-using JuMP
 using LoopVectorization
+using Optim
 using QuadGK
 using Random
 using SpecialFunctions

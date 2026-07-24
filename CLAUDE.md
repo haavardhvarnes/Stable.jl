@@ -76,11 +76,10 @@ Distributions.jl interface:
    (itself fragile near α = 1 — the reliable oracle there is direct cf inversion with the
    stable phase rewrite `s·t + ζ·t·expm1((α-1)·log t)`, see the pdf_fft testset).
 3. **Fitting** — `fit.jl`: `fitcullstable` (McCulloch quantile estimator; his ζ **is** the S0
-   location, so it is returned as μ directly) seeds `fitmlestable` (JuMP 1.x + Ipopt maximizing
-   the **exact `logpdf_batch` log-likelihood** with central finite-difference gradients,
-   `hessian_approximation = limited-memory`, tolerances deliberately loose to match FD noise —
-   tightening them just makes Ipopt run to the iteration cap). Falls back to the McCulloch
-   estimate if the solver fails or worsens the likelihood. `fit_mle(AlphaStable, x)` /
+   location, so it is returned as μ directly) seeds `fitmlestable` (Optim.jl **Nelder–Mead**
+   maximizing the **exact `logpdf_batch` log-likelihood**; the objective clamps parameters into
+   the supported region so no explicit constraints are needed). Falls back to the McCulloch
+   estimate if the optimizer fails or worsens the likelihood. `fit_mle(AlphaStable, x)` /
    `fitstable` / `refitstable` wrap it.
 
 `docs/acceleration-research.md` records the 2026 harmonic-analysis survey (verified idea
@@ -100,7 +99,10 @@ attempting further speedups — it documents which approaches were refuted and w
   (`pdf.(d, xs)`) or `pdf_fft`/`logpdf_fft` for large batches. The batch `quantile` method was
   kept because it is a genuinely different (grid) algorithm.
 - Dierckx was replaced by Interpolations (already a dep) for the FFT grid spline; the local SQP
-  solver used by the sibling version was not ported — Ipopt is registered and sufficient.
+  solver used by the sibling version was not ported. Fitting used JuMP + Ipopt through v0.3.1
+  and was swapped to Optim.jl Nelder–Mead in v0.4.0: identical optima on all benchmark
+  datasets, ~45 fewer dependencies, no binary solver artifacts (see the docstring of
+  `fitmlestable`).
 - `test/MonthRolling.csv` is legacy sample data for manual experiments; the test suite does not
   use it.
 

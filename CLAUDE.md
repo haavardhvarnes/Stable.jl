@@ -58,7 +58,7 @@ Distributions.jl interface:
    three `*_integrand.jl` files are reference implementations, not wired into the dispatchers.
 2. **Distributions.jl interface** — `alphastable.jl`: struct + validation, `pdf` (standardize,
    evaluate, divide by σ), `cdf`, `logpdf`, scalar `quantile` (bracket expansion + `find_zero`),
-   batch `quantile` on ≥ 700 points via an interpolated inverse-cdf grid, `cf`, and `rand`
+   batch `quantile` on ≥ 64 points via an interpolated inverse-cdf grid, `cf`, and `rand`
    (Chambers–Mallows–Stuck **plus the `+ζ` shift converting the S1 draw to S0**).
    `stable_pdf_fft.jl` holds the shared characteristic function `stablechar` (single source of
    truth for `cf`), the FFT-inversion batch pdf (`pdf_fft`/`logpdf_fft`, grid padded by the data

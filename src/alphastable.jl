@@ -144,12 +144,13 @@ end
 """
     quantile(d::AlphaStable, p::AbstractVector{<:Real})
 
-Batch quantiles. For large batches the quantile function is inverted on an
-interpolated cdf grid instead of root-finding every point; probabilities are
-clamped to `[1e-6, 1 - 1e-6]` on that fast path.
+Batch quantiles. For 64 or more points the quantile function is inverted on an
+interpolated cdf grid instead of root-finding every point (the grid's fixed
+cost breaks even against per-point root-finding at roughly 30-50 points);
+probabilities are clamped to `[1e-6, 1 - 1e-6]` on that fast path.
 """
 function quantile(d::AlphaStable, p::AbstractVector{<:Real})
-    length(p) < 700 && return [quantile(d, pp) for pp in p]
+    length(p) < 64 && return [quantile(d, pp) for pp in p]
 
     p_lo = 1e-6
     pc = clamp.(Float64.(p), p_lo, 1 - p_lo)

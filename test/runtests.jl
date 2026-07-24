@@ -111,10 +111,13 @@ using Statistics
         @test quantile(d, 0.0) == -Inf
         @test quantile(d, 1.0) == Inf
         @test_throws DomainError quantile(d, 1.5)
-        # batch fast path (≥ 700 points goes through the interpolated grid)
+        # batch fast path (≥ 64 points goes through the interpolated grid)
         ps = collect(range(0.001, 0.999; length = 1500))
         xq = quantile(d, ps)
         @test maximum(abs(cdf(d, xq[i]) - ps[i]) for i in eachindex(ps)) < 5e-5
+        ps100 = collect(range(0.01, 0.99; length = 100))
+        xq100 = quantile(d, ps100)
+        @test maximum(abs(cdf(d, xq100[i]) - ps100[i]) for i in eachindex(ps100)) < 5e-5
         # small batches use the scalar path
         @test quantile(d, [0.25, 0.75]) ≈ [quantile(d, 0.25), quantile(d, 0.75)]
     end

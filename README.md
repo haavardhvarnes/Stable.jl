@@ -74,7 +74,7 @@ Outside these ranges a `DomainError` is thrown. All numerics run in `Float64`.
 `pdf.(d, xs)` broadcasts the pointwise quadrature. For large batches,
 `pdf_fft(d, xs)` / `logpdf_fft(d, xs)` invert the characteristic function with
 a single FFT (accuracy ≈ 1e-4); `quantile(d, ps)` switches to an interpolated
-inverse-cdf grid for 700+ probabilities.
+inverse-cdf grid for 64+ probabilities.
 
 ## Testing
 

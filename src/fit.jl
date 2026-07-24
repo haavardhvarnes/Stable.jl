@@ -195,10 +195,16 @@ function fitmlestable(indata::AbstractVector{<:Real};
     p0 = clamp.(start, lb, ub)
 
     nll(μ, α, β, σ) = negloglike([μ, α, β, σ], data)
+    # finite-difference steps relative to each parameter's natural scale: μ and
+    # σ live on the data scale, α and β on O(1). An absolute floor of 1e-4
+    # (the old behavior) makes the gradient so noisy for small-scale data
+    # (e.g. return series with σ ~ 0.02) that Ipopt's line search thrashes,
+    # costing ~100 objective evaluations per iteration instead of ~10.
+    fd_scale = (max(start[4], 1e-12), 1.0, 1.0, max(start[4], 1e-12))
     function nll_gradient(g::AbstractVector{T}, μ::T, α::T, β::T, σ::T) where {T}
         x = [μ, α, β, σ]
         for i in eachindex(x)
-            h = 1e-4 * max(1.0, abs(x[i]))
+            h = 1e-4 * max(fd_scale[i], abs(x[i]))
             xp = copy(x)
             xm = copy(x)
             xp[i] += h

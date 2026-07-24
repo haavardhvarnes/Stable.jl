@@ -1,6 +1,6 @@
 name = "Stable"
 uuid = "59a9278b-5a50-4d06-a9f3-c215a8aa7058"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Håvard Hvarnes <haavardhvarnes@gmail.com>"]
 
 [deps]

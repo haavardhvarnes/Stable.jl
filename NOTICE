@@ -1,0 +1,7 @@
+Stable.jl
+Copyright (c) 2026 Håvard Hvarnes
+
+Portions of the numerical routines (the quadrature node tables and series
+expansions under src/) are ported from qastable
+(https://gitlab.com/s_ament/qastable), Copyright (c) Sebastian Ament,
+distributed under the MIT License.

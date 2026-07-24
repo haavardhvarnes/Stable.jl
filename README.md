@@ -45,7 +45,8 @@ it, or develop it into a properly maintained community package in the General
 registry. No permission needed; a note back is appreciated but not required.
 The numerical core is a Julia port of
 [qastable](https://gitlab.com/s_ament/qastable) by Ament & O'Neil (MIT), whose
-attribution should travel with the code (see [LICENSE](LICENSE)).
+attribution should travel with the code (see [LICENSE](LICENSE) and
+[NOTICE](NOTICE)).
 
 ## Parameterization
 

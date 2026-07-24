@@ -23,8 +23,13 @@ Ament & O'Neil (qastable), which support:
 - `β = 0`: `α ∈ [0.5, 2]` (pdf and cdf)
 - `β ≠ 0`: `α ∈ [0.5, 0.9] ∪ [1.1, 2]` for the pdf, `α ∈ [1.1, 2]` for the cdf
 
-Parameter combinations outside these ranges throw a `DomainError`. All
-computations are performed in `Float64` (the quadrature tables are `Float64`).
+Parameter combinations outside these ranges throw a `DomainError`.
+
+Type contract: the struct is generic in `T <: Real`, but all evaluation
+functions (`pdf`, `logpdf`, `cdf`, `ccdf`, `quantile`, `cf`, `rand`, the
+`*_batch` and `*_fft` variants) compute **and return** `Float64` regardless of
+`T` — the quadrature tables are `Float64`. Closed-form statistics (`mean`,
+`var`, `mode`, and `median` when `β = 0`) return `float(T)`.
 
 ```julia
 d = AlphaStable(0.0, 1.5, 0.3, 2.0)
@@ -87,11 +92,12 @@ stable_zeta(α::Real, β::Real) = -β * tan(α * pi / 2)
 #### Statistics
 
 function mean(d::AlphaStable)
-    # in the (M) parameterization E[X] = μ + σζ (finite only for α > 1)
-    return d.α > 1 ? float(d.μ + d.σ * stable_zeta(d.α, d.β)) : float(oftype(d.μ, NaN))
+    # in the (M) parameterization E[X] = μ + σζ (finite only for α > 1);
+    # `float` before `oftype` so NaN survives non-float partypes (Int, Rational)
+    return d.α > 1 ? float(d.μ + d.σ * stable_zeta(d.α, d.β)) : oftype(float(d.μ), NaN)
 end
-var(d::AlphaStable) = d.α == 2 ? float(2 * d.σ^2) : float(oftype(d.σ, Inf))
-mode(d::AlphaStable) = d.β == 0 ? float(d.μ) : float(oftype(d.μ, NaN))
+var(d::AlphaStable) = d.α == 2 ? float(2 * d.σ^2) : oftype(float(d.σ), Inf)
+mode(d::AlphaStable) = d.β == 0 ? float(d.μ) : oftype(float(d.μ), NaN)
 median(d::AlphaStable) = d.β == 0 ? float(d.μ) : quantile(d, 1 / 2)
 
 #### Evaluation
@@ -99,12 +105,14 @@ median(d::AlphaStable) = d.β == 0 ? float(d.μ) : quantile(d, 1 / 2)
 function pdf(d::AlphaStable, x::Real)
     μ, α, β, σ = params(d)
     s = Float64((x - μ) / σ)
-    return stable_pdf(s, Float64(α), Float64(β)) / σ
+    # divide by Float64(σ), not σ: the quadrature value carries only Float64
+    # information, so e.g. a BigFloat σ must not promote it
+    return stable_pdf(s, Float64(α), Float64(β)) / Float64(σ)
 end
 
 function logpdf(d::AlphaStable, x::Real)
     p = pdf(d, x)
-    return p > 0 ? log(p) : oftype(float(p), -Inf)
+    return p > 0 ? log(p) : -Inf
 end
 
 function cdf(d::AlphaStable, x::Real)

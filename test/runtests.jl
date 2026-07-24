@@ -343,6 +343,48 @@ using Statistics
         @test_throws ArgumentError fitmlestable(Float64[])
     end
 
+    @testset "type coherence across partypes" begin
+        # evaluation API returns Float64 for every partype; closed-form
+        # statistics return float(T)
+        d64 = AlphaStable(0.5, 1.5, 0.3, 2.0)
+        d32 = AlphaStable(0.5f0, 1.5f0, 0.3f0, 2.0f0)
+        dbig = AlphaStable(big"0.5", big"1.5", big"0.3", big"2.0")
+        for d in (d64, d32, dbig)
+            @test pdf(d, 0.5) isa Float64
+            @test logpdf(d, 0.5) isa Float64
+            @test cdf(d, 0.5) isa Float64
+            @test ccdf(d, 0.5) isa Float64
+            @test quantile(d, 0.25) isa Float64
+            @test cf(d, 0.7) isa ComplexF64
+            @test rand(Xoshiro(1), d) isa Float64
+            @test eltype(pdf_batch(d, [0.5, 1.0])) === Float64
+            @test eltype(cdf_batch(d, [0.5, 1.0])) === Float64
+            @test eltype(pdf_fft(d, [0.5, 1.0])) === Float64
+        end
+        @test mean(d32) isa Float32
+        @test var(d32) isa Float32
+        @test mean(dbig) isa BigFloat
+        # evaluation values agree across partypes (all Float64 inside)
+        @test pdf(d32, 0.5) ≈ pdf(d64, 0.5) rtol = 1e-6
+        @test pdf(dbig, 0.5) == pdf(d64, 0.5)
+        # inference of the hot scalar API
+        for f in (x -> pdf(x, 0.5), x -> cdf(x, 0.5), x -> quantile(x, 0.25),
+                  mean, var, mode)
+            @test (@inferred f(d32)) !== nothing
+            @test (@inferred f(d64)) !== nothing
+        end
+        # non-float partypes: NaN/Inf statistics branches must not throw
+        # (regression: oftype(::Rational, NaN) is an InexactError)
+        dint = AlphaStable{Int}(0, 1, 0, 1)
+        @test isnan(mean(dint)) && mean(dint) isa Float64
+        @test var(dint) == Inf && var(dint) isa Float64
+        drat = AlphaStable{Rational{Int}}(1 // 2, 3 // 2, 3 // 10, 2 // 1)
+        @test isnan(mode(drat)) && mode(drat) isa Float64
+        @test var(drat) == Inf && var(drat) isa Float64
+        @test isfinite(mean(drat)) && mean(drat) isa Float64
+        @test pdf(drat, 0.5) isa Float64
+    end
+
     @testset "logpdf" begin
         d = AlphaStable(0.0, 1.5, 0.3, 2.0)
         for x in (-5.0, 0.0, 3.0, 40.0)

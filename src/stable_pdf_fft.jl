@@ -15,8 +15,16 @@ function stablechar(t::Float64, mu::Float64, alfa::Float64, beta::Float64,
     μ, α, β, σ = mu, alfa, beta, sigma
     t == 0.0 && return complex(1.0)
     if α != 1.0
+        # Two rewrites keep the skewness term accurate through α → 1, where the
+        # naive forms cancel catastrophically and the cf silently degrades
+        # toward the symmetric one:
+        # - expm1 form of (σ|t|)^(1-α) - 1 (σ > 0 and t ≠ 0 here, so the log
+        #   argument is positive)
+        # - tan(πα/2) as -cot(π(α-1)/2): α - 1 is exact near 1, while the
+        #   rounding of πα/2 near π/2 costs ~5 digits in the direct tangent
         logphi = im * μ * t - σ^α * abs(t)^α *
-                 (1 + im * β * sign(t) * tan(pi * α / 2) * (abs(σ * t)^(1 - α) - 1))
+                 (1 + im * β * sign(t) * (-1 / tan(pi * (α - 1) / 2)) *
+                      expm1((1 - α) * log(σ * abs(t))))
     else
         logphi = im * μ * t - σ * abs(t) * (1 + im * β * (2 / pi) * sign(t) * log(σ * abs(t)))
     end

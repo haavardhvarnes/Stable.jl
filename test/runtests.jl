@@ -151,6 +151,14 @@ using Statistics
         # α = 1 branch
         d1 = AlphaStable(0.0, 1.0, 0.0, 2.0)
         @test cf(d1, 0.5) ≈ exp(-2.0 * 0.5) atol = 1e-12
+        # α → 1 continuity with skew: the ((σ|t|)^(1-α) - 1) factor must be
+        # evaluated via expm1 — the direct pow-then-subtract cancels
+        # catastrophically for |α - 1| ≲ 1e-10 and the skewness term degrades
+        # toward the symmetric cf
+        dskew = AlphaStable(0.3, 1.0, 0.5, 1.2)
+        for a in (1 - 1e-12, 1 + 1e-12), t in (-2.0, -0.5, 0.7, 3.0)
+            @test cf(AlphaStable(0.3, a, 0.5, 1.2), t) ≈ cf(dskew, t) rtol = 1e-9
+        end
     end
 
     @testset "sampling" begin
